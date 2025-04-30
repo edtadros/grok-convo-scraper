@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grok Convo Scraper</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            width: 250px;
+            padding: 15px;
+        }
+        h1 {
+            font-size: 18px;
+            margin-bottom: 15px;
+        }
+        button {
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            width: 100%;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #3367d6;
+        }
+        .status {
+            margin-top: 15px;
+            font-size: 14px;
+            color: #5f6368;
+        }
+        .success {
+            color: #0f9d58;
+        }
+        .error {
+            color: #d93025;
+        }
+    </style>
+</head>
+<body>
+    <h1>Grok Convo Scraper</h1>
+    <p>Click the button below to scrape the current Grok conversation and download it as markdown.</p>
+    <button id="scrapeButton">Scrape Conversation</button>
+    <div id="status" class="status"></div>
+    
+    <script>
+        document.getElementById('scrapeButton').addEventListener('click', () => {
+            const statusElement = document.getElementById('status');
+            statusElement.textContent = 'Scraping...';
+            statusElement.className = 'status';
+            
+            // Query for the active tab
+            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                // Send a message to the content script
+                chrome.tabs.sendMessage(
+                    tabs[0].id,
+                    { action: 'scrape' },
+                    (response) => {
+                        if (chrome.runtime.lastError) {
+                            // Handle error
+                            statusElement.textContent = 'Error: ' + chrome.runtime.lastError.message;
+                            statusElement.className = 'status error';
+                            return;
+                        }
+                        
+                        if (response && response.success) {
+                            statusElement.textContent = 'Success! Conversation downloaded.';
+                            statusElement.className = 'status success';
+                        } else {
+                            statusElement.textContent = 'Error: ' + (response ? response.message : 'Unknown error');
+                            statusElement.className = 'status error';
+                        }
+                    }
+                );
+            });
+        });
+    </script>
+</body>
+</html> 
