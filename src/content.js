@@ -116,223 +116,169 @@ if (!window.grokScraperInitialized) {
           debugLog('No title elements found');
         }
 
-        // SPECIAL HANDLING FOR CHAT PAGES
+        // SPECIAL HANDLING FOR CHAT PAGES WITH KNOWN STRUCTURE
         if (isChat) {
-          debugLog('Using special extraction for chat pages');
+          debugLog('Using special extraction for chat pages based on items-end/items-start classes');
           
-          // Create direct selectors for Grok chat page
-          debugLog('Trying direct selectors for known Grok message elements');
+          // Direct targeting of the user and AI message containers based on the provided structure
+          const userMessages = document.querySelectorAll('.items-end');
+          const aiMessages = document.querySelectorAll('.items-start');
           
-          // These selectors are based on common patterns in chat UIs
-          try {
-            const userMessageSelector = '[class*="human-message"], [class*="user-message"], [class*="query"]';
-            const aiMessageSelector = '[class*="bot-message"], [class*="ai-message"], [class*="assistant-message"], [class*="response"]';
+          debugLog(`Found ${userMessages.length} user messages and ${aiMessages.length} AI messages using items-end/items-start selectors`);
+          
+          if (userMessages.length > 0 && aiMessages.length > 0) {
+            // We found both user and AI messages
             
-            const userMessages = document.querySelectorAll(userMessageSelector);
-            const aiMessages = document.querySelectorAll(aiMessageSelector);
+            // Create arrays of messages with their position in the DOM
+            const allMessages = [];
             
-            debugLog(`Found ${userMessages.length} user messages and ${aiMessages.length} AI messages with direct selectors`);
-            
-            if (userMessages.length > 0 || aiMessages.length > 0) {
-              // We found some messages, map them to objects with text and position
-              const allMessageElements = [];
+            // Process user messages
+            userMessages.forEach(el => {
+              if (!el || !el.classList) return;
               
-              // Process user messages
-              userMessages.forEach(el => {
-                const text = getSafeText(el);
-                if (text && text.length > 10) {
-                  // Try to find a position indicator (like a timestamp or index attribute)
-                  // If none exists, use the DOM order
-                  const position = Array.from(document.querySelectorAll('*')).indexOf(el);
-                  allMessageElements.push({
-                    element: el,
-                    text: text,
-                    position: position,
-                    type: 'user'
-                  });
-                  highlightElement(el, 'user');
+              // Skip elements that aren't directly user messages (nested items or other UI elements)
+              // We want the main container divs
+              const isMainContainer = el.classList.contains('group') && 
+                                    el.classList.contains('flex') && 
+                                    el.classList.contains('flex-col');
+              
+              if (!isMainContainer) return;
+              
+              const text = getSafeText(el);
+              if (text && text.length > 10) {
+                // Determine position for sorting (DOM tree index)
+                const position = Array.from(document.querySelectorAll('*')).indexOf(el);
+                
+                allMessages.push({
+                  element: el,
+                  text: text,
+                  position: position,
+                  type: 'user'
+                });
+                
+                highlightElement(el, 'user');
+                debugLog(`Found user message: ${text.substring(0, 30)}...`);
+              }
+            });
+            
+            // Process AI messages
+            aiMessages.forEach(el => {
+              if (!el || !el.classList) return;
+              
+              // Skip elements that aren't directly AI messages
+              const isMainContainer = el.classList.contains('group') && 
+                                    el.classList.contains('flex') && 
+                                    el.classList.contains('flex-col');
+              
+              if (!isMainContainer) return;
+              
+              const text = getSafeText(el);
+              if (text && text.length > 10) {
+                const position = Array.from(document.querySelectorAll('*')).indexOf(el);
+                
+                allMessages.push({
+                  element: el,
+                  text: text,
+                  position: position,
+                  type: 'ai'
+                });
+                
+                highlightElement(el, 'ai');
+                debugLog(`Found AI message: ${text.substring(0, 30)}...`);
+              }
+            });
+            
+            // Sort by DOM position to maintain conversation order
+            allMessages.sort((a, b) => a.position - b.position);
+            
+            // Generate markdown
+            if (allMessages.length > 0) {
+              conversationFound = true;
+              
+              allMessages.forEach((message, index) => {
+                if (message.type === 'user') {
+                  markdown += `## Human\n\n${message.text}\n\n`;
+                  debugLog(`Added Human message ${index + 1}`);
+                } else {
+                  markdown += `## Grok\n\n${message.text}\n\n`;
+                  debugLog(`Added Grok message ${index + 1}`);
                 }
               });
               
-              // Process AI messages
-              aiMessages.forEach(el => {
-                const text = getSafeText(el);
-                if (text && text.length > 10) {
-                  const position = Array.from(document.querySelectorAll('*')).indexOf(el);
-                  allMessageElements.push({
-                    element: el,
-                    text: text,
-                    position: position,
-                    type: 'ai'
-                  });
-                  highlightElement(el, 'ai');
-                }
-              });
-              
-              // Sort by position in the DOM
-              allMessageElements.sort((a, b) => a.position - b.position);
-              
-              // Add to markdown
-              if (allMessageElements.length > 0) {
-                conversationFound = true;
-                
-                allMessageElements.forEach((msg, index) => {
-                  if (msg.type === 'user') {
-                    markdown += `## Human\n\n${msg.text}\n\n`;
-                    debugLog(`Added Human message ${index}: ${msg.text.substring(0, 30)}...`);
-                  } else {
-                    markdown += `## Grok\n\n${msg.text}\n\n`;
-                    debugLog(`Added Grok message ${index}: ${msg.text.substring(0, 30)}...`);
-                  }
-                });
-              }
-            }
-          } catch (e) {
-            debugLog(`Error with direct selectors: ${e.message}`);
-          }
-          
-          // If still no conversation, try group-based approach
-          if (!conversationFound) {
-            try {
-              // For chat pages, look for elements with role=group that contain the conversation
-              const messageGroups = document.querySelectorAll('[role="group"]');
-              debugLog(`Found ${messageGroups.length} message groups`);
-              
-              if (messageGroups.length > 0) {
-                // Examine each group to find the conversation container
-                messageGroups.forEach((group, groupIndex) => {
-                  if (!group) return;
-                  
-                  debugLog(`Examining group ${groupIndex}`);
-                  
-                  // Look for child elements with substantial text
-                  const children = Array.from(group.children || []).filter(child => {
-                    if (!child) return false;
-                    const text = getSafeText(child);
-                    return text && text.length > 10;
-                  });
-                  
-                  if (children.length >= 2) {
-                    debugLog(`Group ${groupIndex} has ${children.length} potential messages`);
-                    
-                    // Highlight the potential conversation container
-                    highlightElement(group, 'user');
-                    
-                    // Create message pairs
-                    let messagePairs = [];
-                    
-                    // Check if we can find pairs with user/AI markers
-                    for (let i = 0; i < children.length; i += 2) {
-                      if (i + 1 < children.length) {
-                        // We have a potential user-AI pair
-                        const userMsg = children[i];
-                        const aiMsg = children[i + 1];
-                        
-                        // Check if elements exist
-                        if (!userMsg || !aiMsg) continue;
-                        
-                        // Get text content
-                        const userText = getSafeText(userMsg);
-                        const aiText = getSafeText(aiMsg);
-                        
-                        // Skip if either message is empty
-                        if (!userText || !aiText) continue;
-                        
-                        // Add to pairs
-                        messagePairs.push({ 
-                          user: { element: userMsg, text: userText },
-                          ai: { element: aiMsg, text: aiText }
-                        });
-                        
-                        // Highlight for debugging
-                        highlightElement(userMsg, 'user');
-                        highlightElement(aiMsg, 'ai');
-                      }
-                    }
-                    
-                    if (messagePairs.length > 0) {
-                      debugLog(`Found ${messagePairs.length} message pairs`);
-                      conversationFound = true;
-                      
-                      // Process message pairs
-                      messagePairs.forEach((pair, index) => {
-                        // Add user message
-                        markdown += `## Human\n\n${pair.user.text}\n\n`;
-                        debugLog(`Added Human message ${index}: ${pair.user.text.substring(0, 30)}...`);
-                        
-                        // Add AI message
-                        markdown += `## Grok\n\n${pair.ai.text}\n\n`;
-                        debugLog(`Added Grok message ${index}: ${pair.ai.text.substring(0, 30)}...`);
-                      });
-                    }
-                  }
-                });
-              }
-            } catch (e) {
-              debugLog(`Error during group extraction: ${e.message}`);
+              debugLog(`Successfully extracted ${allMessages.length} messages`);
             }
           }
           
-          // If we still haven't found the conversation, try timeIndicator approach
+          // If we couldn't find messages with the above approach, try alternative selectors
           if (!conversationFound) {
+            debugLog('Trying alternative selectors for Grok chat page');
+            
+            // Try a more general approach - looking for message-like containers
             try {
-              debugLog('Trying direct message extraction with time-based sorting');
+              // Look for all flex containers with relative positioning (common in chat UIs)
+              const chatContainers = document.querySelectorAll('.relative.group.flex');
+              debugLog(`Found ${chatContainers.length} possible chat containers`);
               
-              // Look for timestamps or sequential elements that might indicate a message flow
-              const timeIndicators = document.querySelectorAll('[class*="time"], time, [datetime]');
-              debugLog(`Found ${timeIndicators.length} time indicators`);
-              
-              if (timeIndicators.length > 1) {
-                // Look at parent elements of time indicators - they often contain the messages
-                const messageContainers = [];
+              if (chatContainers.length > 0) {
+                const messages = [];
                 
-                timeIndicators.forEach(timeEl => {
-                  if (!timeEl) return;
+                // Process each container
+                chatContainers.forEach((container, index) => {
+                  if (!container || !container.classList) return;
                   
-                  // Find parent element that contains the entire message
-                  let parent = timeEl.parentElement;
-                  while (parent && getSafeText(parent).length < 50 && parent !== document.body) {
-                    parent = parent.parentElement;
-                  }
+                  const text = getSafeText(container);
+                  if (!text || text.length < 10) return;
                   
-                  if (parent && getSafeText(parent).length >= 50) {
-                    messageContainers.push(parent);
-                    highlightElement(parent, 'user');
+                  // Determine if it's a user message (items-end) or AI message (items-start)
+                  const isUserMessage = container.classList.contains('items-end');
+                  const isAIMessage = container.classList.contains('items-start');
+                  
+                  if (isUserMessage || isAIMessage) {
+                    // Get position for sorting
+                    const position = Array.from(document.querySelectorAll('*')).indexOf(container);
+                    
+                    messages.push({
+                      element: container,
+                      text: text,
+                      position: position,
+                      type: isUserMessage ? 'user' : 'ai'
+                    });
+                    
+                    highlightElement(container, isUserMessage ? 'user' : 'ai');
+                    debugLog(`Found ${isUserMessage ? 'user' : 'AI'} message: ${text.substring(0, 30)}...`);
                   }
                 });
                 
-                if (messageContainers.length >= 2) {
-                  debugLog(`Found ${messageContainers.length} message containers with time indicators`);
+                // Sort by position
+                messages.sort((a, b) => a.position - b.position);
+                
+                if (messages.length > 0) {
+                  conversationFound = true;
                   
-                  // Assume alternating pattern (user first, then AI)
-                  let isUser = true;
-                  messageContainers.forEach((container, index) => {
-                    if (!container) return;
-                    
-                    const text = getSafeText(container);
-                    if (text) {
-                      if (isUser) {
-                        markdown += `## Human\n\n${text}\n\n`;
-                        highlightElement(container, 'user');
-                      } else {
-                        markdown += `## Grok\n\n${text}\n\n`;
-                        highlightElement(container, 'ai');
-                      }
-                      isUser = !isUser;
-                      conversationFound = true;
+                  // Generate markdown
+                  messages.forEach((message, index) => {
+                    if (message.type === 'user') {
+                      markdown += `## Human\n\n${message.text}\n\n`;
+                      debugLog(`Added Human message ${index + 1}`);
+                    } else {
+                      markdown += `## Grok\n\n${message.text}\n\n`;
+                      debugLog(`Added Grok message ${index + 1}`);
                     }
                   });
+                  
+                  debugLog(`Successfully extracted ${messages.length} messages using alternative selectors`);
                 }
               }
             } catch (e) {
-              debugLog(`Error during time indicator extraction: ${e.message}`);
+              debugLog(`Error with alternative selectors: ${e.message}`);
             }
           }
         }
         
-        // GENERAL EXTRACTION APPROACH (works for both chat and share pages)
-        // Only run if we haven't found the conversation yet
+        // For shared pages or as fallback for chat pages
         if (!conversationFound) {
+          // Try general extraction approaches...
+          // [Keeping the existing fallback code for brevity]
           try {
             debugLog('Starting direct DOM examination...');
             
@@ -392,6 +338,7 @@ if (!window.grokScraperInitialized) {
                   const hasUserIndicator = 
                     msgClassName.includes('user') ||
                     msgClassName.includes('human') ||
+                    msgClassName.includes('items-end') ||
                     (message.getAttribute && message.getAttribute('data-sender-type') === 'user');
                     
                   const hasAIIndicator = 
@@ -399,6 +346,7 @@ if (!window.grokScraperInitialized) {
                     msgClassName.includes('grok') ||
                     msgClassName.includes('bot') ||
                     msgClassName.includes('ai') ||
+                    msgClassName.includes('items-start') ||
                     (message.getAttribute && message.getAttribute('data-sender-type') === 'assistant');
                     
                   // If we have clear indicators, use them
