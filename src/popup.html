@@ -47,37 +47,6 @@
     <button id="scrapeButton">Scrape Conversation</button>
     <div id="status" class="status"></div>
     
-    <script>
-        document.getElementById('scrapeButton').addEventListener('click', () => {
-            const statusElement = document.getElementById('status');
-            statusElement.textContent = 'Scraping...';
-            statusElement.className = 'status';
-            
-            // Query for the active tab
-            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-                // Send a message to the content script
-                chrome.tabs.sendMessage(
-                    tabs[0].id,
-                    { action: 'scrape' },
-                    (response) => {
-                        if (chrome.runtime.lastError) {
-                            // Handle error
-                            statusElement.textContent = 'Error: ' + chrome.runtime.lastError.message;
-                            statusElement.className = 'status error';
-                            return;
-                        }
-                        
-                        if (response && response.success) {
-                            statusElement.textContent = 'Success! Conversation downloaded.';
-                            statusElement.className = 'status success';
-                        } else {
-                            statusElement.textContent = 'Error: ' + (response ? response.message : 'Unknown error');
-                            statusElement.className = 'status error';
-                        }
-                    }
-                );
-            });
-        });
-    </script>
+    <script src="popup.js"></script>
 </body>
 </html> 
