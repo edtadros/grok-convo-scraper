@@ -20,6 +20,28 @@ chrome.action.onClicked.addListener((tab) => {
   // This only fires if no popup is defined
   // Since we have a popup, this won't normally execute
   console.log('Extension icon clicked directly');
+  
+  // But if it does, inject the content script and scrape directly
+  if (tab.url && tab.url.includes('grok.com')) {
+    chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ['src/content.js']
+    }).then(() => {
+      // After injecting the content script, set a flag to trigger direct scraping
+      chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: () => {
+          window.grokScraperDirectScrape = true;
+        }
+      }).then(() => {
+        // Re-inject content script to trigger the direct scrape
+        chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['src/content.js']
+        });
+      });
+    });
+  }
 });
 
 // Optional: Listen for messages from content scripts or popup
@@ -32,6 +54,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       console.log(`Total conversations scraped: ${newCount}`);
     });
     sendResponse({ status: 'success' });
+  } else if (message.type === 'check_page') {
+    // Check if the current page is a Grok page
+    const isGrokPage = sender.tab.url && sender.tab.url.includes('grok.com');
+    sendResponse({ isGrokPage });
   }
   return true; // Required for async sendResponse
 }); 
