@@ -14,138 +14,186 @@ if (!window.grokScraperInitialized) {
     let markdown = '# Grok Conversation\n\n';
     let conversationFound = false;
     
+    // Add timestamp
+    const timestamp = new Date().toISOString();
+    markdown += `*Exported on: ${new Date().toLocaleString()}*\n\n`;
+    
     // Check if we're on a Grok share page
     if (window.location.href.includes('grok.com/share')) {
       console.log('Detected Grok share page. Extracting conversation...');
       
-      // Target the conversation thread container
-      // For shared Grok conversations, the container often has specific classes
-      const conversationContainers = [
-        document.querySelectorAll('div[class*="conversation-thread"]'),
-        document.querySelectorAll('div[class*="thread"]'),
-        document.querySelectorAll('div[class*="message-container"]'),
-        document.querySelectorAll('div[class*="chat-container"]'),
-        document.querySelectorAll('div[class*="chat-thread"]')
-      ];
-      
-      // Find the container that exists
-      let threadContainer = null;
-      for (const container of conversationContainers) {
-        if (container && container.length > 0) {
-          threadContainer = container;
-          console.log('Found conversation container:', container);
-          break;
+      // Try to get conversation title
+      const titleElements = document.querySelectorAll('h1, .title, header h1, [class*="title"]');
+      if (titleElements && titleElements.length > 0) {
+        for (const titleEl of titleElements) {
+          const titleText = titleEl.innerText.trim();
+          if (titleText && titleText.length > 0) {
+            markdown = `# ${titleText}\n\n*Exported on: ${new Date().toLocaleString()}*\n\n`;
+            break;
+          }
         }
       }
       
-      // If we found the thread container, extract messages
-      if (threadContainer && threadContainer.length > 0) {
-        conversationFound = true;
-        
-        // Process all messages in the thread
-        Array.from(threadContainer).forEach(thread => {
-          // Find user and assistant messages
-          const allMessages = thread.querySelectorAll('div[class*="message"], div[class*="bubble"], div[class*="content"]');
-          
-          if (allMessages && allMessages.length > 0) {
-            console.log(`Found ${allMessages.length} messages`);
-            
-            // Process each message
-            Array.from(allMessages).forEach((message, index) => {
-              // Determine if this is a user or assistant message
-              const isUser = 
-                message.classList.contains('user-message') || 
-                message.getAttribute('data-role') === 'user' || 
-                message.classList.contains('human') ||
-                message.classList.contains('user') ||
-                // Check if it's every other message starting with user (common pattern)
-                (index % 2 === 0);
-              
-              const isAssistant = 
-                message.classList.contains('assistant-message') || 
-                message.getAttribute('data-role') === 'assistant' || 
-                message.classList.contains('grok') ||
-                message.classList.contains('assistant') ||
-                message.classList.contains('bot') ||
-                // Check if it's every other message starting with assistant
-                (index % 2 === 1);
-              
-              // Extract the text content
-              const messageText = message.innerText.trim();
-              
-              // Skip empty messages
-              if (!messageText) return;
-              
-              // Format as markdown
-              if (isUser) {
-                markdown += `## User\n\n${messageText}\n\n`;
-              } else if (isAssistant) {
-                markdown += `## Assistant\n\n${messageText}\n\n`;
-              } else {
-                // If we can't determine, use a generic header
-                markdown += `## Message ${index + 1}\n\n${messageText}\n\n`;
-              }
-            });
+      // Enhanced detection of message patterns
+      // First, look for specific UI patterns in Grok's interface
+
+      // Look for message role indicators (common in AI chat interfaces)
+      const userRoleIndicators = [
+        'user-avatar', 'user-icon', 'user-profile', 'human-avatar',
+        'user-message', 'user-query', 'user-input', 'human-message'
+      ];
+      
+      const aiRoleIndicators = [
+        'assistant-avatar', 'ai-avatar', 'bot-avatar', 'grok-avatar',
+        'assistant-message', 'ai-message', 'bot-message', 'grok-message',
+        'response', 'answer', 'completion'
+      ];
+
+      // Try to find message containers with role indicators
+      let userMessages = [];
+      let aiMessages = [];
+      
+      // Check for role indicators in class names
+      for (const indicator of userRoleIndicators) {
+        const elements = document.querySelectorAll(`[class*="${indicator}"]`);
+        if (elements.length > 0) {
+          userMessages = [...userMessages, ...elements];
+        }
+      }
+      
+      for (const indicator of aiRoleIndicators) {
+        const elements = document.querySelectorAll(`[class*="${indicator}"]`);
+        if (elements.length > 0) {
+          aiMessages = [...aiMessages, ...elements];
+        }
+      }
+      
+      // Check for role attributes
+      const roleAttrMessages = document.querySelectorAll('[data-role], [role]');
+      if (roleAttrMessages.length > 0) {
+        Array.from(roleAttrMessages).forEach(el => {
+          const role = el.getAttribute('data-role') || el.getAttribute('role');
+          if (role && role.toLowerCase().includes('user')) {
+            userMessages.push(el);
+          } else if (role && (role.toLowerCase().includes('assistant') || role.toLowerCase().includes('bot'))) {
+            aiMessages.push(el);
           }
         });
       }
       
-      // If no messages found using the container approach, try to identify by semantic structure
+      // If we found distinct user and AI messages
+      if (userMessages.length > 0 && aiMessages.length > 0) {
+        conversationFound = true;
+        console.log(`Found ${userMessages.length} user messages and ${aiMessages.length} AI messages`);
+        
+        // Sort messages by their position in the DOM to maintain conversation order
+        const allMessages = [...userMessages, ...aiMessages].sort((a, b) => {
+          const position = a.compareDocumentPosition(b);
+          return position & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1;
+        });
+        
+        // Process messages in DOM order
+        let lastRole = null;
+        allMessages.forEach(message => {
+          // Determine if this is a user or AI message
+          const isUser = userMessages.includes(message);
+          const isAI = aiMessages.includes(message);
+          
+          // Skip messages that are containers of other messages we've already processed
+          if (lastRole === 'user' && isUser) {
+            const isContainer = Array.from(userMessages).some(m => 
+              m !== message && message.contains(m)
+            );
+            if (isContainer) return;
+          }
+          
+          if (lastRole === 'ai' && isAI) {
+            const isContainer = Array.from(aiMessages).some(m => 
+              m !== message && message.contains(m)
+            );
+            if (isContainer) return;
+          }
+          
+          // Get message text
+          const messageText = message.innerText.trim();
+          if (!messageText) return;
+          
+          // Add to markdown with clear role distinction
+          if (isUser) {
+            markdown += `## Human\n\n${messageText}\n\n`;
+            lastRole = 'user';
+          } else if (isAI) {
+            markdown += `## Grok\n\n${messageText}\n\n`;
+            lastRole = 'ai';
+          }
+        });
+      }
+      
+      // Fallback 1: Try to find message pairs in a conversation thread
       if (!conversationFound) {
-        // Look for page title or conversation title to add to the markdown
-        const titleElements = document.querySelectorAll('h1, .title, .conversation-title');
-        if (titleElements && titleElements.length > 0) {
-          const title = titleElements[0].innerText.trim();
-          markdown = `# ${title}\n\n`;
-        }
+        // Look for conversation thread containers
+        const threadContainers = document.querySelectorAll('[class*="thread"], [class*="conversation"], [class*="chat"]');
         
-        // Try to find elements that might contain messages
-        const possibleUserElements = document.querySelectorAll('div[class*="user"], div[class*="human"], p[class*="user"], div[role="user"]');
-        const possibleAssistantElements = document.querySelectorAll('div[class*="assistant"], div[class*="grok"], p[class*="assistant"], div[role="assistant"]');
-        
-        if (possibleUserElements.length > 0 && possibleAssistantElements.length > 0) {
-          conversationFound = true;
-          
-          // Process user messages
-          Array.from(possibleUserElements).forEach((element, index) => {
-            const text = element.innerText.trim();
-            if (text) {
-              markdown += `## User\n\n${text}\n\n`;
+        if (threadContainers.length > 0) {
+          for (const container of threadContainers) {
+            // Look for child elements that might be messages
+            const messages = container.querySelectorAll('div, p, section');
+            
+            if (messages.length >= 2) { // Need at least one pair of messages
+              // Try to identify alternating pattern (common in chat interfaces)
+              const messageArray = Array.from(messages).filter(m => m.innerText.trim().length > 0);
+              
+              if (messageArray.length >= 2) {
+                conversationFound = true;
+                console.log(`Found ${messageArray.length} messages in thread container`);
+                
+                // Assume first message is from user, followed by AI, then alternating
+                messageArray.forEach((message, index) => {
+                  const text = message.innerText.trim();
+                  if (!text) return;
+                  
+                  if (index % 2 === 0) {
+                    markdown += `## Human\n\n${text}\n\n`;
+                  } else {
+                    markdown += `## Grok\n\n${text}\n\n`;
+                  }
+                });
+                
+                break; // Stop once we've found a valid container
+              }
             }
-          });
-          
-          // Process assistant messages
-          Array.from(possibleAssistantElements).forEach((element, index) => {
-            const text = element.innerText.trim();
-            if (text) {
-              markdown += `## Assistant\n\n${text}\n\n`;
-            }
-          });
+          }
         }
       }
       
-      // Last resort: try to find alternating paragraphs or divs with substantial content
+      // Fallback 2: Try semantic structure based on more general selectors
       if (!conversationFound) {
+        // Look for paragraphs or divs with substantial content
         const paragraphs = document.querySelectorAll('p, div > div');
-        if (paragraphs.length > 3) { // Ensure we have enough content for a conversation
-          let userTurn = true; // Assume conversation starts with user
-          let hasContent = false;
+        const substantialParagraphs = Array.from(paragraphs).filter(p => {
+          const text = p.innerText.trim();
+          return text && text.length > 15;
+        });
+        
+        if (substantialParagraphs.length >= 2) {
+          conversationFound = true;
+          console.log(`Using ${substantialParagraphs.length} paragraphs as conversation`);
           
-          Array.from(paragraphs).forEach((p, index) => {
+          // Assume conversation starts with human
+          let isHuman = true;
+          
+          substantialParagraphs.forEach((p, index) => {
             const text = p.innerText.trim();
-            // Only consider paragraphs with substantial content
-            if (text && text.length > 15) {
-              hasContent = true;
-              if (userTurn) {
-                markdown += `## User\n\n${text}\n\n`;
-              } else {
-                markdown += `## Assistant\n\n${text}\n\n`;
-              }
-              userTurn = !userTurn; // Alternate between user and assistant
+            if (!text) return;
+            
+            if (isHuman) {
+              markdown += `## Human\n\n${text}\n\n`;
+            } else {
+              markdown += `## Grok\n\n${text}\n\n`;
             }
+            
+            isHuman = !isHuman; // Alternate between human and AI
           });
-          
-          conversationFound = hasContent;
         }
       }
     }
