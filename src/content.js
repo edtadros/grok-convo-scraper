@@ -78,6 +78,284 @@ if (!window.grokScraperInitialized) {
       }
     }
     
+    // Get formatted HTML content (preserves formatting like bold)
+    function getFormattedHtml(element) {
+      if (!element) return '';
+      try {
+        // Create temporary div to handle conversion
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = element.innerHTML;
+        
+        // Process HTML formatting to markdown
+        
+        // Debug logging function for list processing
+        const debugListProcessing = (name, content) => {
+          console.log(`[DEBUG] ${name}:`, content);
+        };
+        
+        // Process code blocks first (pre and code elements)
+        const transformCodeBlocks = () => {
+          const preElements = tempDiv.querySelectorAll('pre');
+          preElements.forEach(pre => {
+            const codeContent = pre.textContent || '';
+            const wrapper = document.createElement('div');
+            // Add triple backticks for code blocks
+            wrapper.textContent = '```\n' + codeContent + '\n```\n';
+            pre.parentNode.replaceChild(wrapper, pre);
+          });
+          
+          // Handle inline code (not in pre blocks)
+          const codeElements = tempDiv.querySelectorAll('code');
+          codeElements.forEach(code => {
+            const codeContent = code.textContent || '';
+            const wrapper = document.createElement('span');
+            // Add single backtick for inline code
+            wrapper.textContent = '`' + codeContent + '`';
+            code.parentNode.replaceChild(wrapper, code);
+          });
+        };
+        
+        // Process emphasis formatting
+        const transformEmphasis = () => {
+          // Bold
+          ['b', 'strong'].forEach(tag => {
+            const elements = tempDiv.querySelectorAll(tag);
+            elements.forEach(el => {
+              const wrapper = document.createElement('span');
+              wrapper.textContent = `**${el.textContent}**`;
+              el.parentNode.replaceChild(wrapper, el);
+            });
+          });
+          
+          // Italic
+          ['i', 'em'].forEach(tag => {
+            const elements = tempDiv.querySelectorAll(tag);
+            elements.forEach(el => {
+              const wrapper = document.createElement('span');
+              wrapper.textContent = `*${el.textContent}*`;
+              el.parentNode.replaceChild(wrapper, el);
+            });
+          });
+        };
+        
+        // Process links
+        const transformLinks = () => {
+          const linkElements = tempDiv.querySelectorAll('a');
+          linkElements.forEach(link => {
+            const text = link.textContent || '';
+            const href = link.getAttribute('href') || '';
+            if (href) {
+              const wrapper = document.createElement('span');
+              wrapper.textContent = `[${text}](${href})`;
+              link.parentNode.replaceChild(wrapper, link);
+            }
+          });
+        };
+        
+        // Process images
+        const transformImages = () => {
+          const imageElements = tempDiv.querySelectorAll('img');
+          imageElements.forEach(img => {
+            const alt = img.getAttribute('alt') || '';
+            const src = img.getAttribute('src') || '';
+            if (src) {
+              const wrapper = document.createElement('span');
+              wrapper.textContent = `![${alt}](${src})`;
+              img.parentNode.replaceChild(wrapper, img);
+            }
+          });
+        };
+        
+        // Process blockquotes
+        const transformBlockquotes = () => {
+          const quotes = tempDiv.querySelectorAll('blockquote');
+          quotes.forEach(quote => {
+            const text = quote.textContent || '';
+            // Split by lines and prefix each with >
+            const lines = text.split('\n');
+            const quotedText = lines.map(line => `> ${line}`).join('\n');
+            
+            const wrapper = document.createElement('div');
+            wrapper.textContent = quotedText;
+            quote.parentNode.replaceChild(wrapper, quote);
+          });
+        };
+        
+        // Process horizontal rules
+        const transformHorizontalRules = () => {
+          const rules = tempDiv.querySelectorAll('hr');
+          rules.forEach(rule => {
+            const wrapper = document.createElement('div');
+            wrapper.textContent = '\n---\n';
+            rule.parentNode.replaceChild(wrapper, rule);
+          });
+        };
+        
+        // Use a simplified approach just for lists that handles the nesting properly
+        const handleLists = () => {
+          // Clean slate - create a new result with proper formatting
+          let markdownContent = '';
+          
+          // First, try to find any main heading
+          const headings = tempDiv.querySelectorAll('h1, h2, h3, h4, h5, h6');
+          if (headings.length > 0) {
+            for (const heading of headings) {
+              const level = parseInt(heading.tagName.substring(1), 10);
+              const hashes = '#'.repeat(level);
+              markdownContent += `${hashes} ${heading.textContent.trim()}\n\n`;
+            }
+          }
+          
+          // Find all top-level ordered lists
+          const orderedLists = tempDiv.querySelectorAll('ol');
+          for (const ol of orderedLists) {
+            // Ignore nested lists
+            if (ol.closest('li') !== null) continue;
+            
+            markdownContent += '\n';
+            
+            // Get all list items
+            const items = ol.querySelectorAll(':scope > li');
+            items.forEach((item, index) => {
+              // Get the main text directly attached to the list item (not including nested elements)
+              let mainText = '';
+              
+              // Collect text content from direct child text nodes and elements that aren't lists
+              for (const node of item.childNodes) {
+                if (node.nodeType === Node.TEXT_NODE) {
+                  mainText += node.textContent.trim() + ' ';
+                } else if (node.nodeType === Node.ELEMENT_NODE && 
+                          node.tagName.toLowerCase() !== 'ul' && 
+                          node.tagName.toLowerCase() !== 'ol' &&
+                          !node.querySelector('ul, ol')) {
+                  mainText += node.textContent.trim() + ' ';
+                }
+              }
+              mainText = mainText.trim();
+              
+              // Add numbered item with its content
+              markdownContent += `${index + 1}. ${mainText}\n`;
+              
+              // Check for nested lists
+              const nestedLists = item.querySelectorAll(':scope > ul, :scope > ol');
+              if (nestedLists.length > 0) {
+                // Process each nested list
+                nestedLists.forEach(nestedList => {
+                  const isOrdered = nestedList.tagName.toLowerCase() === 'ol';
+                  const nestedItems = nestedList.querySelectorAll(':scope > li');
+                  
+                  nestedItems.forEach((nestedItem, nestedIndex) => {
+                    const nestedText = nestedItem.textContent.trim();
+                    const prefix = isOrdered ? `   ${nestedIndex + 1}.` : '   -';
+                    markdownContent += `${prefix} ${nestedText}\n`;
+                  });
+                });
+                
+                // Add spacing after nested lists
+                markdownContent += '\n';
+              } else {
+                // Add spacing after main item
+                markdownContent += '\n';
+              }
+            });
+          }
+          
+          // Find all top-level unordered lists
+          const unorderedLists = tempDiv.querySelectorAll('ul');
+          for (const ul of unorderedLists) {
+            // Ignore nested lists
+            if (ul.closest('li') !== null) continue;
+            
+            markdownContent += '\n';
+            
+            // Get all list items
+            const items = ul.querySelectorAll(':scope > li');
+            items.forEach(item => {
+              // Get the main text directly attached to the list item
+              let mainText = '';
+              
+              // Collect text content from direct child text nodes and elements that aren't lists
+              for (const node of item.childNodes) {
+                if (node.nodeType === Node.TEXT_NODE) {
+                  mainText += node.textContent.trim() + ' ';
+                } else if (node.nodeType === Node.ELEMENT_NODE && 
+                          node.tagName.toLowerCase() !== 'ul' && 
+                          node.tagName.toLowerCase() !== 'ol' &&
+                          !node.querySelector('ul, ol')) {
+                  mainText += node.textContent.trim() + ' ';
+                }
+              }
+              mainText = mainText.trim();
+              
+              // Add bullet point
+              markdownContent += `- ${mainText}\n`;
+              
+              // Check for nested lists
+              const nestedLists = item.querySelectorAll(':scope > ul, :scope > ol');
+              if (nestedLists.length > 0) {
+                // Process each nested list
+                nestedLists.forEach(nestedList => {
+                  const isOrdered = nestedList.tagName.toLowerCase() === 'ol';
+                  const nestedItems = nestedList.querySelectorAll(':scope > li');
+                  
+                  nestedItems.forEach((nestedItem, nestedIndex) => {
+                    const nestedText = nestedItem.textContent.trim();
+                    const prefix = isOrdered ? `   ${nestedIndex + 1}.` : '   -';
+                    markdownContent += `${prefix} ${nestedText}\n`;
+                  });
+                });
+                
+                // Add spacing after nested lists
+                markdownContent += '\n';
+              } else {
+                // Add spacing after main item
+                markdownContent += '\n';
+              }
+            });
+          }
+          
+          // Find all paragraphs and add them properly
+          const paragraphs = tempDiv.querySelectorAll('p');
+          for (const p of paragraphs) {
+            if (p.textContent.trim()) {
+              markdownContent += `${p.textContent.trim()}\n\n`;
+            }
+          }
+          
+          // Clean up by removing excessive blank lines
+          markdownContent = markdownContent.replace(/\n{3,}/g, '\n\n');
+          
+          debugListProcessing('Final Markdown Content', markdownContent);
+          return markdownContent;
+        };
+        
+        // Apply basic formatting first
+        transformCodeBlocks();
+        transformEmphasis();
+        transformLinks();
+        transformImages();
+        transformBlockquotes();
+        transformHorizontalRules();
+        
+        // Now use our specialized list handling
+        const listContent = handleLists();
+        // If we got list content, use it
+        if (listContent && listContent.trim().length > 0) {
+          return listContent;
+        }
+        
+        // Otherwise, fall back to getting the formatted text
+        let result = tempDiv.textContent || '';
+        // Clean up extra whitespace while preserving meaningful line breaks
+        result = result.replace(/\n{3,}/g, '\n\n'); // Replace 3+ consecutive line breaks with 2
+        
+        return result.trim();
+      } catch (e) {
+        debugLog(`Error converting HTML to markdown: ${e.message}`);
+        return getSafeText(element); // Fallback to plain text
+      }
+    }
+    
     // Add debug overlay if not in headless mode
     const debugContainer = addDebugOverlay();
     
@@ -172,7 +450,8 @@ if (!window.grokScraperInitialized) {
               
               if (!isMainContainer) return;
               
-              const text = getSafeText(el);
+              // For AI messages, use the formatted HTML to preserve formatting
+              const text = getFormattedHtml(el);
               if (text && text.length > 10) {
                 const position = Array.from(document.querySelectorAll('*')).indexOf(el);
                 
@@ -197,13 +476,16 @@ if (!window.grokScraperInitialized) {
               
               allMessages.forEach((message, index) => {
                 if (message.type === 'user') {
-                  markdown += `## Human\n\n${message.text}\n\n`;
-                  debugLog(`Added Human message ${index + 1}`);
+                  markdown += `## User [${index + 1}]\n\n> ${message.text}\n\n`;
+                  debugLog(`Added User message ${index + 1}`);
                 } else {
-                  markdown += `## Grok\n\n${message.text}\n\n`;
+                  markdown += `## Grok [${index + 2}]\n\n${message.text}\n\n`;
                   debugLog(`Added Grok message ${index + 1}`);
                 }
               });
+              
+              // Add instructions section
+              markdown += `## Instructions for Grok\n\nContinue the conversation from the last message, using the context provided above.\n`;
               
               debugLog(`Successfully extracted ${allMessages.length} messages`);
             }
@@ -237,15 +519,18 @@ if (!window.grokScraperInitialized) {
                     // Get position for sorting
                     const position = Array.from(document.querySelectorAll('*')).indexOf(container);
                     
+                    // Use formatted HTML for AI messages to preserve formatting
+                    const messageText = isAIMessage ? getFormattedHtml(container) : getSafeText(container);
+                    
                     messages.push({
                       element: container,
-                      text: text,
+                      text: messageText,
                       position: position,
                       type: isUserMessage ? 'user' : 'ai'
                     });
                     
                     highlightElement(container, isUserMessage ? 'user' : 'ai');
-                    debugLog(`Found ${isUserMessage ? 'user' : 'AI'} message: ${text.substring(0, 30)}...`);
+                    debugLog(`Found ${isUserMessage ? 'user' : 'AI'} message: ${messageText.substring(0, 30)}...`);
                   }
                 });
                 
@@ -258,13 +543,16 @@ if (!window.grokScraperInitialized) {
                   // Generate markdown
                   messages.forEach((message, index) => {
                     if (message.type === 'user') {
-                      markdown += `## Human\n\n${message.text}\n\n`;
-                      debugLog(`Added Human message ${index + 1}`);
+                      markdown += `## User [${index + 1}]\n\n> ${message.text}\n\n`;
+                      debugLog(`Added User message ${index + 1}`);
                     } else {
-                      markdown += `## Grok\n\n${message.text}\n\n`;
+                      markdown += `## Grok [${index + 2}]\n\n${message.text}\n\n`;
                       debugLog(`Added Grok message ${index + 1}`);
                     }
                   });
+                  
+                  // Add instructions section
+                  markdown += `## Instructions for Grok\n\nContinue the conversation from the last message, using the context provided above.\n`;
                   
                   debugLog(`Successfully extracted ${messages.length} messages using alternative selectors`);
                 }
@@ -355,11 +643,11 @@ if (!window.grokScraperInitialized) {
                   
                   // Add to markdown
                   if (isUser) {
-                    markdown += `## Human\n\n${text}\n\n`;
+                    markdown += `## User [${index + 1}]\n\n> ${text}\n\n`;
                     highlightElement(message, 'user');
-                    debugLog(`Added Human message ${index}: ${text.substring(0, 30)}...`);
+                    debugLog(`Added User message ${index}: ${text.substring(0, 30)}...`);
                   } else {
-                    markdown += `## Grok\n\n${text}\n\n`;
+                    markdown += `## Grok [${index + 2}]\n\n${text}\n\n`;
                     highlightElement(message, 'ai');
                     debugLog(`Added Grok message ${index}: ${text.substring(0, 30)}...`);
                   }
@@ -405,11 +693,11 @@ if (!window.grokScraperInitialized) {
                   if (text) {
                     // Add to markdown
                     if (userTurn) {
-                      markdown += `## Human\n\n${text}\n\n`;
+                      markdown += `## User [${index + 1}]\n\n> ${text}\n\n`;
                       highlightElement(el, 'user');
-                      debugLog(`Added Human message: ${text.slice(0, 30)}...`);
+                      debugLog(`Added User message: ${text.slice(0, 30)}...`);
                     } else {
-                      markdown += `## Grok\n\n${text}\n\n`;
+                      markdown += `## Grok [${index + 2}]\n\n${text}\n\n`;
                       highlightElement(el, 'ai');
                       debugLog(`Added Grok message: ${text.slice(0, 30)}...`);
                     }
@@ -447,9 +735,14 @@ if (!window.grokScraperInitialized) {
     }
     
     // Log the final markdown structure with message counts
-    const humanCount = (markdown.match(/## Human/g) || []).length;
+    const userCount = (markdown.match(/## User/g) || []).length;
     const grokCount = (markdown.match(/## Grok/g) || []).length;
-    debugLog(`Final markdown contains ${humanCount} Human messages and ${grokCount} Grok messages`);
+    debugLog(`Final markdown contains ${userCount} User messages and ${grokCount} Grok messages`);
+    
+    // Add instructions section if not already added and some conversation content was found
+    if (conversationFound && !markdown.includes('## Instructions for Grok')) {
+      markdown += `\n## Instructions for Grok\n\nContinue the conversation from the last message, using the context provided above.\n`;
+    }
     
     console.log('Markdown generated:', markdown);
     return markdown;
