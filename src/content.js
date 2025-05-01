@@ -196,13 +196,73 @@ if (!window.grokScraperInitialized) {
           // Clean slate - create a new result with proper formatting
           let markdownContent = '';
           
-          // First, try to find any main heading
-          const headings = tempDiv.querySelectorAll('h1, h2, h3, h4, h5, h6');
-          if (headings.length > 0) {
+          // Helper function to ensure content has proper spacing between sections
+          const addSection = (title, content) => {
+            if (markdownContent && !markdownContent.endsWith('\n\n')) {
+              markdownContent += '\n\n';
+            }
+            markdownContent += title + '\n\n' + content;
+          };
+          
+          // First, try to find any main heading and its content
+          const headingLevels = {};
+          
+          // Process headings in order
+          for (let i = 1; i <= 6; i++) {
+            const headings = tempDiv.querySelectorAll(`h${i}`);
             for (const heading of headings) {
               const level = parseInt(heading.tagName.substring(1), 10);
               const hashes = '#'.repeat(level);
-              markdownContent += `${hashes} ${heading.textContent.trim()}\n\n`;
+              const headingText = heading.textContent.trim();
+              const headingMarkdown = `${hashes} ${headingText}`;
+              
+              // Find content that follows this heading until the next heading
+              let contentText = '';
+              let currentNode = heading.nextSibling;
+              
+              while (currentNode && 
+                    !(currentNode.nodeType === Node.ELEMENT_NODE && 
+                      currentNode.tagName.match(/^H[1-6]$/i))) {
+                
+                // Only add content from non-heading elements
+                if (currentNode.nodeType === Node.TEXT_NODE) {
+                  contentText += currentNode.textContent;
+                } else if (currentNode.nodeType === Node.ELEMENT_NODE) {
+                  // Skip lists, we'll handle them separately
+                  if (!['UL', 'OL'].includes(currentNode.tagName.toUpperCase())) {
+                    contentText += currentNode.textContent + '\n';
+                  }
+                }
+                
+                currentNode = currentNode.nextSibling;
+              }
+              
+              // Store the heading at its level
+              if (!headingLevels[level]) {
+                headingLevels[level] = [];
+              }
+              
+              headingLevels[level].push({
+                heading: headingMarkdown,
+                content: contentText.trim()
+              });
+            }
+          }
+          
+          // Add headings in order of hierarchy and level
+          for (let i = 1; i <= 6; i++) {
+            if (headingLevels[i]) {
+              headingLevels[i].forEach(item => {
+                if (item.content) {
+                  addSection(item.heading, item.content);
+                } else {
+                  // Just add the heading if no content
+                  if (markdownContent && !markdownContent.endsWith('\n\n')) {
+                    markdownContent += '\n\n';
+                  }
+                  markdownContent += item.heading + '\n\n';
+                }
+              });
             }
           }
           
@@ -212,7 +272,7 @@ if (!window.grokScraperInitialized) {
             // Ignore nested lists
             if (ol.closest('li') !== null) continue;
             
-            markdownContent += '\n';
+            let listContent = '';
             
             // Get all list items
             const items = ol.querySelectorAll(':scope > li');
@@ -234,7 +294,7 @@ if (!window.grokScraperInitialized) {
               mainText = mainText.trim();
               
               // Add numbered item with its content
-              markdownContent += `${index + 1}. ${mainText}\n`;
+              listContent += `${index + 1}. ${mainText}\n`;
               
               // Check for nested lists
               const nestedLists = item.querySelectorAll(':scope > ul, :scope > ol');
@@ -247,17 +307,23 @@ if (!window.grokScraperInitialized) {
                   nestedItems.forEach((nestedItem, nestedIndex) => {
                     const nestedText = nestedItem.textContent.trim();
                     const prefix = isOrdered ? `   ${nestedIndex + 1}.` : '   -';
-                    markdownContent += `${prefix} ${nestedText}\n`;
+                    listContent += `${prefix} ${nestedText}\n`;
                   });
                 });
                 
                 // Add spacing after nested lists
-                markdownContent += '\n';
+                listContent += '\n';
               } else {
                 // Add spacing after main item
-                markdownContent += '\n';
+                listContent += '\n';
               }
             });
+            
+            // Add the ordered list section with proper spacing
+            if (markdownContent && !markdownContent.endsWith('\n\n')) {
+              markdownContent += '\n\n';
+            }
+            markdownContent += listContent;
           }
           
           // Find all top-level unordered lists
@@ -266,7 +332,7 @@ if (!window.grokScraperInitialized) {
             // Ignore nested lists
             if (ul.closest('li') !== null) continue;
             
-            markdownContent += '\n';
+            let listContent = '';
             
             // Get all list items
             const items = ul.querySelectorAll(':scope > li');
@@ -288,7 +354,7 @@ if (!window.grokScraperInitialized) {
               mainText = mainText.trim();
               
               // Add bullet point
-              markdownContent += `- ${mainText}\n`;
+              listContent += `- ${mainText}\n`;
               
               // Check for nested lists
               const nestedLists = item.querySelectorAll(':scope > ul, :scope > ol');
@@ -301,29 +367,51 @@ if (!window.grokScraperInitialized) {
                   nestedItems.forEach((nestedItem, nestedIndex) => {
                     const nestedText = nestedItem.textContent.trim();
                     const prefix = isOrdered ? `   ${nestedIndex + 1}.` : '   -';
-                    markdownContent += `${prefix} ${nestedText}\n`;
+                    listContent += `${prefix} ${nestedText}\n`;
                   });
                 });
                 
                 // Add spacing after nested lists
-                markdownContent += '\n';
+                listContent += '\n';
               } else {
                 // Add spacing after main item
-                markdownContent += '\n';
+                listContent += '\n';
               }
             });
+            
+            // Add the unordered list section with proper spacing
+            if (markdownContent && !markdownContent.endsWith('\n\n')) {
+              markdownContent += '\n\n';
+            }
+            markdownContent += listContent;
           }
           
           // Find all paragraphs and add them properly
           const paragraphs = tempDiv.querySelectorAll('p');
+          let paragraphContent = '';
           for (const p of paragraphs) {
             if (p.textContent.trim()) {
-              markdownContent += `${p.textContent.trim()}\n\n`;
+              paragraphContent += `${p.textContent.trim()}\n\n`;
             }
+          }
+          
+          // Add paragraphs if any were found
+          if (paragraphContent) {
+            if (markdownContent && !markdownContent.endsWith('\n\n')) {
+              markdownContent += '\n\n';
+            }
+            markdownContent += paragraphContent;
           }
           
           // Clean up by removing excessive blank lines
           markdownContent = markdownContent.replace(/\n{3,}/g, '\n\n');
+          
+          // Ensure proper section spacing
+          // Make sure headings have two newlines before them (except the first one)
+          markdownContent = markdownContent.replace(/([^\n])\n(#{1,6} )/g, '$1\n\n$2');
+          
+          // Fix spacing after headings
+          markdownContent = markdownContent.replace(/(#{1,6} .+)\n([^\n])/g, '$1\n\n$2');
           
           debugListProcessing('Final Markdown Content', markdownContent);
           return markdownContent;
