@@ -55,12 +55,15 @@ grok-convo-scraper/
 └── README.md          - This file
 ```
 
-### Todo
+## AI-Assisted Development
 
-- [ ] Create extension icons
-- [ ] Implement specific scraping logic for Grok AI conversations
-- [ ] Add download functionality for the markdown files
-- [ ] Improve markdown formatting for better readability
+This project was primarily developed using various AI tools, with human guidance and direction. The development process leveraged the strengths of multiple AI systems:
+
+- **Grok AI**: Assisted with planning and conceptual tasks.
+- **ChatGPT**: Helped with specific code optimization and problem-solving.
+- **Claude**: Contributed to documentation and code refinement.
+
+The human role involved directing the AI systems, defining requirements, making key decisions, and ensuring the final product met the intended functionality. This project demonstrates how AI tools can be effectively utilized to create software with minimal manual coding.
 
 ## License
 
