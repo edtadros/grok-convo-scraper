@@ -9,6 +9,10 @@ Grok Convo Scraper is a Chrome extension designed to seamlessly extract and conv
 - **User-Friendly Interface**: Initiate the scraping process with a simple click.
 - **Downloadable Output**: Save conversations as markdown files for easy sharing and storage.
 
+## Limitations
+
+- The current version of the Grok Convo Scraper does not support scraping or embedding images in the markdown output. Images are skipped during the scraping process. This feature may be considered for future updates.
+
 ## Installation
 
 ### Development Mode
