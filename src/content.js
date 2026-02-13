@@ -70,6 +70,27 @@ if (!window.grokScraperInitialized) {
       }
     }
 
+    // Select the best element that contains assistant response content.
+    function findMessageBubble(root) {
+      if (!root || !root.querySelector) return root;
+
+      const candidateSelectors = [
+        '.message-bubble',
+        '[data-testid="ai-message-body"]',
+        '[data-testid*="assistant"]',
+        '.prose',
+        '.markdown',
+        '.whitespace-pre-wrap'
+      ];
+
+      for (const selector of candidateSelectors) {
+        const candidate = root.querySelector(selector);
+        if (candidate) return candidate;
+      }
+
+      return root;
+    }
+
     // Log page details
     console.log('Page URL: ' + window.location.href);
     console.log('Page title: ' + document.title);
@@ -103,15 +124,19 @@ if (!window.grokScraperInitialized) {
       }
 
       // SPECIAL HANDLING FOR CHAT PAGES WITH KNOWN STRUCTURE
-      console.log('Using special extraction for chat pages based on items-end/items-start classes');
+      console.log('Using updated extraction for chat pages with robust selectors');
 
-      // Direct targeting of the user and AI message containers based on the provided structure
-      const userMessages = document.querySelectorAll('.items-end');
-      const aiMessages = document.querySelectorAll('.items-start');
+      // Try specific chat-container selectors first, then fallback to older selectors.
+      const userMessages = document.querySelectorAll(
+        '.relative.group.flex.flex-col.items-end, .group.flex.flex-col.items-end, .items-end'
+      );
+      const aiMessages = document.querySelectorAll(
+        '.relative.group.flex.flex-col.items-start, .group.flex.flex-col.items-start, .items-start'
+      );
 
-      console.log(`Found ${userMessages.length} user messages and ${aiMessages.length} AI messages using items-end/items-start selectors`);
+      console.log(`Found ${userMessages.length} user messages and ${aiMessages.length} AI messages using updated selectors`);
 
-      if (userMessages.length > 0 && aiMessages.length > 0) {
+      if (userMessages.length > 0 || aiMessages.length > 0) {
         // We found both user and AI messages
 
         // Create arrays of messages with their position in the DOM
@@ -123,7 +148,8 @@ if (!window.grokScraperInitialized) {
 
           // Skip elements that aren't directly user messages (nested items or other UI elements)
           // We want the main container divs
-          const isMainContainer = el.classList.contains('group') && 
+          const isMainContainer = (el.classList.contains('group') || el.classList.contains('relative')) &&
+                                el.classList.contains('items-end') &&
                                 el.classList.contains('flex') && 
                                 el.classList.contains('flex-col');
 
@@ -150,7 +176,8 @@ if (!window.grokScraperInitialized) {
           if (!el || !el.classList) return;
 
           // Skip elements that aren't directly AI messages
-          const isMainContainer = el.classList.contains('group') && 
+          const isMainContainer = (el.classList.contains('group') || el.classList.contains('relative')) &&
+                                el.classList.contains('items-start') &&
                                 el.classList.contains('flex') && 
                                 el.classList.contains('flex-col');
 
@@ -189,42 +216,48 @@ if (!window.grokScraperInitialized) {
               tempDiv.innerHTML = message.element.innerHTML;
               let grokMarkdown = '';
 
-              // Find the 'message-bubble' div
-              const messageBubble = tempDiv.querySelector('.message-bubble');
-              if (messageBubble) {
-                messageBubble.childNodes.forEach((node, idx) => {
-                  console.log(`Node type: ${node.nodeType}, Node name: ${node.nodeName}`);
-                  if (node.nodeType === Node.ELEMENT_NODE && ['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'UL', 'LI', 'OL'].includes(node.tagName)) {
-                    let nodeHtml = node.innerHTML;
+              const messageBubble = findMessageBubble(tempDiv);
+              messageBubble.childNodes.forEach((node, idx) => {
+                console.log(`Node type: ${node.nodeType}, Node name: ${node.nodeName}`);
+                if (node.nodeType === Node.ELEMENT_NODE && ['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'UL', 'LI', 'OL'].includes(node.tagName)) {
+                  let nodeHtml = node.innerHTML;
 
-                    // Process <strong> and <em> tags
-                    nodeHtml = nodeHtml.replace(/<strong>(.*?)<\/strong>/g, '**$1**');
-                    nodeHtml = nodeHtml.replace(/<em>(.*?)<\/em>/g, '*$1*');
+                  // Process <strong> and <em> tags
+                  nodeHtml = nodeHtml.replace(/<strong>(.*?)<\/strong>/g, '**$1**');
+                  nodeHtml = nodeHtml.replace(/<em>(.*?)<\/em>/g, '*$1*');
 
-                    let nodeText = nodeHtml.trim();
-                    if (node.tagName.startsWith('H')) {
-                      const level = parseInt(node.tagName[1]);
-                      nodeText = `${'#'.repeat(level)} ${nodeText}`;
-                    } else if (['UL', 'OL'].includes(node.tagName)) {
-                      nodeText = processList(node);
-                    }
+                  let nodeText = nodeHtml.trim();
+                  if (node.tagName.startsWith('H')) {
+                    const level = parseInt(node.tagName[1]);
+                    nodeText = `${'#'.repeat(level)} ${nodeText}`;
+                  } else if (['UL', 'OL'].includes(node.tagName)) {
+                    nodeText = processList(node);
+                  }
 
-                    console.log(`Processing node: ${node.tagName}, Text: ${nodeText}`);
-                    grokMarkdown += `${nodeText}\n\n`;
-                    if (node.tagName.toLowerCase() === 'p') {
+                  console.log(`Processing node: ${node.tagName}, Text: ${nodeText}`);
+                  grokMarkdown += `${nodeText}\n\n`;
+                  if (node.tagName.toLowerCase() === 'p') {
+                    grokMarkdown += '\n\r';
+                    console.log(`Added newline and carriage return after <p> node`);
+                  }
+                  if (idx < messageBubble.childNodes.length - 1) {
+                    const nextNode = messageBubble.childNodes[idx + 1];
+                    if (nextNode.nodeType === Node.ELEMENT_NODE && node.tagName !== nextNode.tagName) {
                       grokMarkdown += '\n\r';
-                      console.log(`Added newline and carriage return after <p> node`);
-                    }
-                    if (idx < messageBubble.childNodes.length - 1) {
-                      const nextNode = messageBubble.childNodes[idx + 1];
-                      if (nextNode.nodeType === Node.ELEMENT_NODE && node.tagName !== nextNode.tagName) {
-                        grokMarkdown += '\n\r';
-                        console.log(`Added newline and carriage return between different node types: ${node.tagName} and ${nextNode.tagName}`);
-                      }
+                      console.log(`Added newline and carriage return between different node types: ${node.tagName} and ${nextNode.tagName}`);
                     }
                   }
-                  console.log(`Current grokMarkdown content: ${grokMarkdown}`);
-                });
+                }
+                console.log(`Current grokMarkdown content: ${grokMarkdown}`);
+              });
+
+              // Grok now often nests real message content inside wrapper <div>s.
+              // If structured parsing misses it, fall back to plain text so output is never blank.
+              if (!grokMarkdown.trim()) {
+                grokMarkdown = getSafeText(messageBubble);
+                if (grokMarkdown) {
+                  grokMarkdown = `${grokMarkdown}\n\n`;
+                }
               }
 
               markdown += `## Grok\n\n${grokMarkdown}`;
@@ -295,48 +328,54 @@ if (!window.grokScraperInitialized) {
                   console.log(`Added User message`);
                 } else {
                   const tempDiv = document.createElement('div');
-                  tempDiv.innerHTML = message.element.innerHTML;
+                  tempDiv.innerHTML = message.innerHTML;
                   let grokMarkdown = '';
 
-                  // Find the 'message-bubble' div
-                  const messageBubble = tempDiv.querySelector('.message-bubble');
-                  if (messageBubble) {
-                    messageBubble.childNodes.forEach((node, idx) => {
-                      console.log(`Node type: ${node.nodeType}, Node name: ${node.nodeName}`);
-                      if (node.nodeType === Node.ELEMENT_NODE && ['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'UL', 'LI', 'OL'].includes(node.tagName)) {
-                        let nodeHtml = node.innerHTML;
+                  const messageBubble = findMessageBubble(tempDiv);
+                  messageBubble.childNodes.forEach((node, idx) => {
+                    console.log(`Node type: ${node.nodeType}, Node name: ${node.nodeName}`);
+                    if (node.nodeType === Node.ELEMENT_NODE && ['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'UL', 'LI', 'OL'].includes(node.tagName)) {
+                      let nodeHtml = node.innerHTML;
 
-                        // Process <strong> and <em> tags
-                        nodeHtml = nodeHtml.replace(/<strong>(.*?)<\/strong>/g, '**$1**');
-                        nodeHtml = nodeHtml.replace(/<em>(.*?)<\/em>/g, '*$1*');
+                      // Process <strong> and <em> tags
+                      nodeHtml = nodeHtml.replace(/<strong>(.*?)<\/strong>/g, '**$1**');
+                      nodeHtml = nodeHtml.replace(/<em>(.*?)<\/em>/g, '*$1*');
 
-                        // Remove any remaining HTML tags
-                        nodeHtml = nodeHtml.replace(/<[^>]+>/g, '');
+                      // Remove any remaining HTML tags
+                      nodeHtml = nodeHtml.replace(/<[^>]+>/g, '');
 
-                        let nodeText = nodeHtml.trim();
-                        if (node.tagName.startsWith('H')) {
-                          const level = parseInt(node.tagName[1]);
-                          nodeText = `${'#'.repeat(level)} ${nodeText}`;
-                        } else if (['UL', 'OL'].includes(node.tagName)) {
-                          nodeText = processList(node);
-                        }
+                      let nodeText = nodeHtml.trim();
+                      if (node.tagName.startsWith('H')) {
+                        const level = parseInt(node.tagName[1]);
+                        nodeText = `${'#'.repeat(level)} ${nodeText}`;
+                      } else if (['UL', 'OL'].includes(node.tagName)) {
+                        nodeText = processList(node);
+                      }
 
-                        console.log(`Processing node: ${node.tagName}, Text: ${nodeText}`);
-                        grokMarkdown += `${nodeText}\n\n`;
-                        if (node.tagName.toLowerCase() === 'p') {
+                      console.log(`Processing node: ${node.tagName}, Text: ${nodeText}`);
+                      grokMarkdown += `${nodeText}\n\n`;
+                      if (node.tagName.toLowerCase() === 'p') {
+                        grokMarkdown += '\n\r';
+                        console.log(`Added newline and carriage return after <p> node`);
+                      }
+                      if (idx < messageBubble.childNodes.length - 1) {
+                        const nextNode = messageBubble.childNodes[idx + 1];
+                        if (nextNode.nodeType === Node.ELEMENT_NODE && node.tagName !== nextNode.tagName) {
                           grokMarkdown += '\n\r';
-                          console.log(`Added newline and carriage return after <p> node`);
-                        }
-                        if (idx < messageBubble.childNodes.length - 1) {
-                          const nextNode = messageBubble.childNodes[idx + 1];
-                          if (nextNode.nodeType === Node.ELEMENT_NODE && node.tagName !== nextNode.tagName) {
-                            grokMarkdown += '\n\r';
-                            console.log(`Added newline and carriage return between different node types: ${node.tagName} and ${nextNode.tagName}`);
-                          }
+                          console.log(`Added newline and carriage return between different node types: ${node.tagName} and ${nextNode.tagName}`);
                         }
                       }
-                      console.log(`Current grokMarkdown content: ${grokMarkdown}`);
-                    });
+                    }
+                    console.log(`Current grokMarkdown content: ${grokMarkdown}`);
+                  });
+
+                  // Grok now often nests real message content inside wrapper <div>s.
+                  // If structured parsing misses it, fall back to plain text so output is never blank.
+                  if (!grokMarkdown.trim()) {
+                    grokMarkdown = getSafeText(messageBubble);
+                    if (grokMarkdown) {
+                      grokMarkdown = `${grokMarkdown}\n\n`;
+                    }
                   }
 
                   markdown += `## Grok\n\n${grokMarkdown}`;
@@ -443,45 +482,51 @@ if (!window.grokScraperInitialized) {
                   tempDiv.innerHTML = message.element.innerHTML;
                   let grokMarkdown = '';
 
-                  // Find the 'message-bubble' div
-                  const messageBubble = tempDiv.querySelector('.message-bubble');
-                  if (messageBubble) {
-                    messageBubble.childNodes.forEach((node, idx) => {
-                      console.log(`Node type: ${node.nodeType}, Node name: ${node.nodeName}`);
-                      if (node.nodeType === Node.ELEMENT_NODE && ['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'UL', 'LI', 'OL'].includes(node.tagName)) {
-                        let nodeHtml = node.innerHTML;
+                  const messageBubble = findMessageBubble(tempDiv);
+                  messageBubble.childNodes.forEach((node, idx) => {
+                    console.log(`Node type: ${node.nodeType}, Node name: ${node.nodeName}`);
+                    if (node.nodeType === Node.ELEMENT_NODE && ['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'UL', 'LI', 'OL'].includes(node.tagName)) {
+                      let nodeHtml = node.innerHTML;
 
-                        // Process <strong> and <em> tags
-                        nodeHtml = nodeHtml.replace(/<strong>(.*?)<\/strong>/g, '**$1**');
-                        nodeHtml = nodeHtml.replace(/<em>(.*?)<\/em>/g, '*$1*');
+                      // Process <strong> and <em> tags
+                      nodeHtml = nodeHtml.replace(/<strong>(.*?)<\/strong>/g, '**$1**');
+                      nodeHtml = nodeHtml.replace(/<em>(.*?)<\/em>/g, '*$1*');
 
-                        // Remove any remaining HTML tags
-                        nodeHtml = nodeHtml.replace(/<[^>]+>/g, '');
+                      // Remove any remaining HTML tags
+                      nodeHtml = nodeHtml.replace(/<[^>]+>/g, '');
 
-                        let nodeText = nodeHtml.trim();
-                        if (node.tagName.startsWith('H')) {
-                          const level = parseInt(node.tagName[1]);
-                          nodeText = `${'#'.repeat(level)} ${nodeText}`;
-                        } else if (['UL', 'OL'].includes(node.tagName)) {
-                          nodeText = processList(node);
-                        }
+                      let nodeText = nodeHtml.trim();
+                      if (node.tagName.startsWith('H')) {
+                        const level = parseInt(node.tagName[1]);
+                        nodeText = `${'#'.repeat(level)} ${nodeText}`;
+                      } else if (['UL', 'OL'].includes(node.tagName)) {
+                        nodeText = processList(node);
+                      }
 
-                        console.log(`Processing node: ${node.tagName}, Text: ${nodeText}`);
-                        grokMarkdown += `${nodeText}\n\n`;
-                        if (node.tagName.toLowerCase() === 'p') {
+                      console.log(`Processing node: ${node.tagName}, Text: ${nodeText}`);
+                      grokMarkdown += `${nodeText}\n\n`;
+                      if (node.tagName.toLowerCase() === 'p') {
+                        grokMarkdown += '\n\r';
+                        console.log(`Added newline and carriage return after <p> node`);
+                      }
+                      if (idx < messageBubble.childNodes.length - 1) {
+                        const nextNode = messageBubble.childNodes[idx + 1];
+                        if (nextNode.nodeType === Node.ELEMENT_NODE && node.tagName !== nextNode.tagName) {
                           grokMarkdown += '\n\r';
-                          console.log(`Added newline and carriage return after <p> node`);
-                        }
-                        if (idx < messageBubble.childNodes.length - 1) {
-                          const nextNode = messageBubble.childNodes[idx + 1];
-                          if (nextNode.nodeType === Node.ELEMENT_NODE && node.tagName !== nextNode.tagName) {
-                            grokMarkdown += '\n\r';
-                            console.log(`Added newline and carriage return between different node types: ${node.tagName} and ${nextNode.tagName}`);
-                          }
+                          console.log(`Added newline and carriage return between different node types: ${node.tagName} and ${nextNode.tagName}`);
                         }
                       }
-                      console.log(`Current grokMarkdown content: ${grokMarkdown}`);
-                    });
+                    }
+                    console.log(`Current grokMarkdown content: ${grokMarkdown}`);
+                  });
+
+                  // Grok now often nests real message content inside wrapper <div>s.
+                  // If structured parsing misses it, fall back to plain text so output is never blank.
+                  if (!grokMarkdown.trim()) {
+                    grokMarkdown = getSafeText(messageBubble);
+                    if (grokMarkdown) {
+                      grokMarkdown = `${grokMarkdown}\n\n`;
+                    }
                   }
 
                   markdown += `## Grok\n\n${grokMarkdown}`;
@@ -537,45 +582,51 @@ if (!window.grokScraperInitialized) {
                     tempDiv.innerHTML = el.innerHTML;
                     let grokMarkdown = '';
 
-                    // Find the 'message-bubble' div
-                    const messageBubble = tempDiv.querySelector('.message-bubble');
-                    if (messageBubble) {
-                      messageBubble.childNodes.forEach((node, idx) => {
-                        console.log(`Node type: ${node.nodeType}, Node name: ${node.nodeName}`);
-                        if (node.nodeType === Node.ELEMENT_NODE && ['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'UL', 'LI', 'OL'].includes(node.tagName)) {
-                          let nodeHtml = node.innerHTML;
+                    const messageBubble = findMessageBubble(tempDiv);
+                    messageBubble.childNodes.forEach((node, idx) => {
+                      console.log(`Node type: ${node.nodeType}, Node name: ${node.nodeName}`);
+                      if (node.nodeType === Node.ELEMENT_NODE && ['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'UL', 'LI', 'OL'].includes(node.tagName)) {
+                        let nodeHtml = node.innerHTML;
 
-                          // Process <strong> and <em> tags
-                          nodeHtml = nodeHtml.replace(/<strong>(.*?)<\/strong>/g, '**$1**');
-                          nodeHtml = nodeHtml.replace(/<em>(.*?)<\/em>/g, '*$1*');
+                        // Process <strong> and <em> tags
+                        nodeHtml = nodeHtml.replace(/<strong>(.*?)<\/strong>/g, '**$1**');
+                        nodeHtml = nodeHtml.replace(/<em>(.*?)<\/em>/g, '*$1*');
 
-                          // Remove any remaining HTML tags
-                          nodeHtml = nodeHtml.replace(/<[^>]+>/g, '');
+                        // Remove any remaining HTML tags
+                        nodeHtml = nodeHtml.replace(/<[^>]+>/g, '');
 
-                          let nodeText = nodeHtml.trim();
-                          if (node.tagName.startsWith('H')) {
-                            const level = parseInt(node.tagName[1]);
-                            nodeText = `${'#'.repeat(level)} ${nodeText}`;
-                          } else if (['UL', 'OL'].includes(node.tagName)) {
-                            nodeText = processList(node);
-                          }
+                        let nodeText = nodeHtml.trim();
+                        if (node.tagName.startsWith('H')) {
+                          const level = parseInt(node.tagName[1]);
+                          nodeText = `${'#'.repeat(level)} ${nodeText}`;
+                        } else if (['UL', 'OL'].includes(node.tagName)) {
+                          nodeText = processList(node);
+                        }
 
-                          console.log(`Processing node: ${node.tagName}, Text: ${nodeText}`);
-                          grokMarkdown += `${nodeText}\n\n`;
-                          if (node.tagName.toLowerCase() === 'p') {
+                        console.log(`Processing node: ${node.tagName}, Text: ${nodeText}`);
+                        grokMarkdown += `${nodeText}\n\n`;
+                        if (node.tagName.toLowerCase() === 'p') {
+                          grokMarkdown += '\n\r';
+                          console.log(`Added newline and carriage return after <p> node`);
+                        }
+                        if (idx < messageBubble.childNodes.length - 1) {
+                          const nextNode = messageBubble.childNodes[idx + 1];
+                          if (nextNode.nodeType === Node.ELEMENT_NODE && node.tagName !== nextNode.tagName) {
                             grokMarkdown += '\n\r';
-                            console.log(`Added newline and carriage return after <p> node`);
-                          }
-                          if (idx < messageBubble.childNodes.length - 1) {
-                            const nextNode = messageBubble.childNodes[idx + 1];
-                            if (nextNode.nodeType === Node.ELEMENT_NODE && node.tagName !== nextNode.tagName) {
-                              grokMarkdown += '\n\r';
-                              console.log(`Added newline and carriage return between different node types: ${node.tagName} and ${nextNode.tagName}`);
-                            }
+                            console.log(`Added newline and carriage return between different node types: ${node.tagName} and ${nextNode.tagName}`);
                           }
                         }
-                        console.log(`Current grokMarkdown content: ${grokMarkdown}`);
-                      });
+                      }
+                      console.log(`Current grokMarkdown content: ${grokMarkdown}`);
+                    });
+
+                    // Grok now often nests real message content inside wrapper <div>s.
+                    // If structured parsing misses it, fall back to plain text so output is never blank.
+                    if (!grokMarkdown.trim()) {
+                      grokMarkdown = getSafeText(messageBubble);
+                      if (grokMarkdown) {
+                        grokMarkdown = `${grokMarkdown}\n\n`;
+                      }
                     }
 
                     markdown += `## Grok\n\n${grokMarkdown}\n`;
